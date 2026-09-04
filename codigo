@@ -1,0 +1,114 @@
+from flask import Flask, render_template, request, redirect, url_for
+import sqlite3
+import os
+
+app = Flask(__name__)
+
+DB_NAME = os.path.join(os.path.dirname(__file__), "tienda_juegos.db")
+
+
+def get_conexion():
+    """Abre una conexión a la base de datos SQLite."""
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row  # permite acceder a las columnas por nombre
+    return conn
+
+
+def inicializar_bd():
+    """Crea la tabla 'juegos' si todavía no existe."""
+    conn = get_conexion()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS juegos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            genero TEXT,
+            plataforma TEXT,
+            precio REAL NOT NULL DEFAULT 0,
+            stock INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+@app.route("/")
+def index():
+    """Muestra la lista de todos los juegos, con búsqueda opcional."""
+    busqueda = request.args.get("q", "").strip()
+    conn = get_conexion()
+    if busqueda:
+        juegos = conn.execute(
+            "SELECT * FROM juegos WHERE nombre LIKE ? ORDER BY nombre",
+            (f"%{busqueda}%",)
+        ).fetchall()
+    else:
+        juegos = conn.execute("SELECT * FROM juegos ORDER BY nombre").fetchall()
+    conn.close()
+    return render_template("index.html", juegos=juegos, busqueda=busqueda)
+
+
+@app.route("/agregar", methods=["GET", "POST"])
+def agregar():
+    """Formulario para agregar un juego nuevo."""
+    if request.method == "POST":
+        nombre = request.form["nombre"].strip()
+        genero = request.form.get("genero", "").strip()
+        plataforma = request.form.get("plataforma", "").strip()
+        precio = float(request.form.get("precio") or 0)
+        stock = int(request.form.get("stock") or 0)
+
+        conn = get_conexion()
+        conn.execute(
+            "INSERT INTO juegos (nombre, genero, plataforma, precio, stock) VALUES (?, ?, ?, ?, ?)",
+            (nombre, genero, plataforma, precio, stock)
+        )
+        conn.commit()
+        conn.close()
+        return redirect(url_for("index"))
+
+    return render_template("form.html", juego=None, titulo="Agregar juego")
+
+
+@app.route("/editar/<int:juego_id>", methods=["GET", "POST"])
+def editar(juego_id):
+    """Formulario para editar un juego existente."""
+    conn = get_conexion()
+
+    if request.method == "POST":
+        nombre = request.form["nombre"].strip()
+        genero = request.form.get("genero", "").strip()
+        plataforma = request.form.get("plataforma", "").strip()
+        precio = float(request.form.get("precio") or 0)
+        stock = int(request.form.get("stock") or 0)
+
+        conn.execute(
+            "UPDATE juegos SET nombre=?, genero=?, plataforma=?, precio=?, stock=? WHERE id=?",
+            (nombre, genero, plataforma, precio, stock, juego_id)
+        )
+        conn.commit()
+        conn.close()
+        return redirect(url_for("index"))
+
+    juego = conn.execute("SELECT * FROM juegos WHERE id=?", (juego_id,)).fetchone()
+    conn.close()
+    return render_template("form.html", juego=juego, titulo="Editar juego")
+
+
+@app.route("/eliminar/<int:juego_id>", methods=["POST"])
+def eliminar(juego_id):
+    """Elimina un juego de la base de datos."""
+    conn = get_conexion()
+    conn.execute("DELETE FROM juegos WHERE id=?", (juego_id,))
+    conn.commit()
+    conn.close()
+    return redirect(url_for("index"))
+
+
+if __name__ == "__main__":
+    inicializar_bd()
+    # host="0.0.0.0" es necesario para que funcione en Render
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
+else:
+    # También inicializamos la BD cuando Render/Gunicorn importa la app
+    inicializar_bd()
